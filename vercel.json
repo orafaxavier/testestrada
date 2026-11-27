@@ -1,0 +1,8 @@
+{
+  "outputDirectory": "public",
+  "cleanUrls": true,
+  "headers": [
+    { "source": "/sw.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+    { "source": "/(index.html|app.js|boot.js|config.js)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+  ]
+}
