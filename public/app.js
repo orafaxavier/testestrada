@@ -22,6 +22,21 @@ function canArtists(){return acc()==='mix'}
 function _oldCanArtists(){var p=person(ui.me);return !!(p&&(p.team==='art'||p.admin))&&!!S.artists}
 function inl(){return false}
 function isAdmin(){var p=person(ui.me);return !!(p&&p.admin)}
+/* quem atualiza o quê (mapa de fontes definido pelo Rafael em 27/11) */
+var EDIT_DEF={roteiro:['dandan','julia','luizmar'],voo:['dandan','julia'],hotel:['dandan','julia'],van:['dandan','julia','rafaelseg'],bus:['dandan','julia'],bagagem:['dandan','julia','japa','jeff']};
+var EDIT_NAME={roteiro:'Roteiro do dia',voo:'Voos e jato',hotel:'Hotel e rooming',van:'Vans, placas e telefones dos motoristas',bus:'Ônibus e rota',bagagem:'Bagagens e materiais'};
+function editRules(){return S.editRules||EDIT_DEF}
+function canEdit(k,pid){var r=editRules()[k];return !!r&&r.indexOf(pid||ui.me)>=0}
+function editKinds(pid){var r=editRules();return Object.keys(r).filter(function(k){return r[k].indexOf(pid||ui.me)>=0})}
+function isEditor(){return !ui.realMe&&(isAdmin()||editKinds().length>0)}
+var ACT_KIND={'add-day':'roteiro','edit-day':'roteiro','add-event':'roteiro','edit-event':'roteiro','add-step':'roteiro','edit-step':'roteiro','add-flight':'voo','edit-flight':'voo','add-bus':'bus','edit-bus':'bus','edit-gyn':'bus','add-van':'van','edit-van':'van','add-veh':'van','edit-veh':'van','edit-hotel':'hotel','add-bag':'bagagem','edit-bag':'bagagem'};
+var SHEET_KIND={day:'roteiro',event:'roteiro',step:'roteiro',flight:'voo',bus:'bus',gyn:'bus',van:'van',veh:'van',hotel:'hotel',bag:'bagagem'};
+function sheetAllowed(kind){var k=SHEET_KIND[kind];return k?canEdit(k):isAdmin()}
+/* avisos de uniforme saem do app (pedido do Rafael, 27/11) */
+var UNIF=/uniforme/i;
+function noUniform(){if(S._noUnif)return;S.notices=(S.notices||[]).filter(function(n){return !UNIF.test(n.text||'')});S.checklist=(S.checklist||[]).filter(function(c){return !UNIF.test(c.text||'')});
+  (S.days||[]).forEach(function(d){if(d.dayNotes)d.dayNotes=d.dayNotes.filter(function(n){return !UNIF.test(n)})});
+  var t=S.sectorTips||{};Object.keys(t).forEach(function(k){t[k]=(t[k]||[]).filter(function(n){return !UNIF.test(n)})});S._noUnif=1}
 function applies(w,pid){if(!w||w==='all')return true;if(w.only)return w.only.indexOf(pid)>=0;if(w.except)return w.except.indexOf(pid)<0;return true}
 function whoIds(w){return S.people.filter(function(p){return applies(w,p.id)}).map(function(p){return p.id})}
 function names(ids){return ids.map(function(id){var p=person(id);return p?p.name:id})}
@@ -109,10 +124,10 @@ function syncRide(d){if(!d.steps.length||!S.people)return;
     var pax=S.people.filter(function(p){return p.team!=='art'&&applies(j.f.who,p.id)}).map(function(p){return p.id});if(!pax.length)return;
     var r={id:'sride'+String(j.f.id).replace(/[^a-z0-9]/gi,''),link:key,modal:'van',time:rideLand(d,j.f),title:'Carro com os artistas: hangar → evento',note:'Quem vai no jato segue com os artistas até o evento e não pega as vans.',who:{only:pax}};
     quPlace(d,r)})}
-function syncAll(){(S.days||[]).forEach(function(d){syncDay(d);syncRide(d)})}
+function syncAll(){noUniform();(S.days||[]).forEach(function(d){syncDay(d);syncRide(d)})}
 var stripSeen={};
 function centerStrips(){[].forEach.call(document.querySelectorAll('nav.strip'),function(nv){var b=nv.querySelector('[aria-pressed="true"]');if(!b)return;var key=(nv.getAttribute('aria-label')||'')+'|'+(ui.mode||'')+'|'+(ui.tab||'')+'|'+(ui.artTab||''),id=b.dataset.day||b.dataset.aday||'';if(stripSeen[key]===id&&nv.scrollLeft)return;stripSeen[key]=id;nv.scrollLeft=Math.max(0,b.offsetLeft-nv.offsetLeft-(nv.clientWidth-b.offsetWidth)/2)})}
-function render(){syncAll();render0();liveAfter();try{centerStrips()}catch(e){}}
+function render(){syncAll();render0();liveAfter();try{centerStrips();editBtnMount()}catch(e){}}
 function render0(){
   document.documentElement.classList.toggle('loginbg',!ui.me);
   if(!ui.me){document.documentElement.classList.remove('th-adm','th-art')}
@@ -122,7 +137,7 @@ function render0(){
   document.documentElement.classList.toggle('th-adm',th==='th-adm');document.documentElement.classList.toggle('th-art',th==='th-art');
   var rs=document.documentElement.style,sc=(!th&&ui.me)?team(person(ui.me)).color:null;
   if(sc){rs.setProperty('--tape','var('+sc+')');rs.setProperty('--tape-ink','#1a0507')}else{rs.removeProperty('--tape');rs.removeProperty('--tape-ink')}
-  if(ui.mode==='admin'&&isAdmin()){renderAdmin();return}
+  if(ui.mode==='admin'&&isEditor()){renderAdmin();return}
   if(isArtist()){renderArt();return}
   if(ui.tab==='artistas'&&!canArtists()) ui.tab='roteiro';
   var h=(ui.realMe?'<div class="preview-bar"><span>Visualizando como '+esc(person(ui.me).name)+'</span><button class="btn" data-act="end-preview">Voltar ao portal</button></div>':'')+'<div class="wrap">'+topBar();
@@ -227,6 +242,7 @@ function roteiroView(){
     h+='</div>';
   } else h+='<div class="flag info">'+IC_INFO+'<span>Dia de deslocamento. Sem evento no roteiro.</span></div>';
   (d.dayNotes||[]).forEach(function(n){h+='<div class="flag info">'+IC_INFO+'<span>'+esc(n)+'</span></div>'});
+  (d.bags||[]).forEach(function(x){h+='<div class="flag info">'+IC_INFO+'<span><b>Bagagens e materiais:</b> '+esc(x.text)+'</span></div>'});
   h+='</section>';
 
   // timeline
@@ -373,7 +389,7 @@ function sectorPanel(p){
   days.forEach(function(d){
     var vans=d.vans.filter(function(v){if(v.team===tk||(tk==='tec'&&/cargo/i.test(v.name)))return true;if(RIDE_HOME[tk]&&quVanKey(v.name).indexOf(RIDE_HOME[tk])>=0){var ls=d.steps.filter(function(x){return x.link==='van:'+v.id})[0];return !ls||applies(ls.who,p.id)}return false});
     var ev=d.events.filter(function(e){return e.type==='show'})[0];
-    var notes=(d.dayNotes||[]).filter(function(n){return !kw||kw.test(n)});
+    var notes=(d.dayNotes||[]).filter(function(n){return !kw||kw.test(n)}).concat((d.bags||[]).map(function(x){return 'Bagagens e materiais: '+x.text}));
     h+='<div class="secitem"><div class="k">'+esc(dateInfo(d).wd)+', '+d.dd+'/'+d.mm+' · '+esc(d.city)+'</div>';
     vans.forEach(function(v){h+='<div class="v"><span class="mono">'+esc(v.time)+'</span> · '+esc(v.name)+(v.people?' · '+esc(v.people):'')+'</div>'});
     if(ev&&(tk==='band'||tk==='tec')) h+='<div class="card-n">'+(ev.soundcheck?'Passagem '+esc(ev.soundcheck)+' · ':'')+'Show '+val(ev.showtime)+'</div>';
@@ -717,11 +733,12 @@ function adminBar(){return '<div class="adminbar"><div class="adminbar-in"><span
 
 /* ---------- portal ADM ---------- */
 function renderAdmin(){
+  if(!isAdmin()&&['dias','artistas'].indexOf(ui.admTab)<0)ui.admTab='dias';if(!isAdmin()&&ui.admTab==='artistas'&&!canEdit('van'))ui.admTab='dias';
   var p=person(ui.me), T=ui.admTab;
-  var h='<div class="wrap"><header class="adm-head"><div class="row"><div class="brand"><img src="'+LOGO.sym+'" alt=""><b>STRADA</b></div><span style="flex:1"></span><button type="button" class="me-chip" style="margin-left:0" data-act="logout" aria-label="Trocar usuário">'+av(p)+esc(p.name.split(' ')[0])+'</button></div><div class="eyebrow">Portal ADM · Produção</div><h1 class="disp">'+({geral:'Visão geral',hist:'Histórico',dias:'Dias da turnê',pessoas:'Pessoas',avisos:'Avisos',artistas:'Artistas'}[T])+'</h1></header>';
+  var h='<div class="wrap"><header class="adm-head"><div class="row"><div class="brand"><img src="'+LOGO.sym+'" alt=""><b>STRADA</b></div><span style="flex:1"></span>'+(isAdmin()?'':'<button type="button" class="admin-link" data-act="leave-edit">Voltar ao app</button>')+'<button type="button" class="me-chip" style="margin-left:0" data-act="logout" aria-label="Trocar usuário">'+av(p)+esc(p.name.split(' ')[0])+'</button></div><div class="eyebrow">Portal ADM · Produção</div><h1 class="disp">'+({geral:'Visão geral',hist:'Histórico',dias:'Dias da turnê',pessoas:'Pessoas',avisos:'Avisos',artistas:'Artistas'}[T])+'</h1></header>';
   if(T==='geral') h+=admGeral(); else if(T==='hist') h+=admHistorico(); else if(T==='dias') h+=admDias(); else if(T==='pessoas') h+=admPessoas(); else if(T==='avisos') h+=admAvisos(); else h+=admArtistas();
   h+='</div>';
-  var t=[['geral','Geral'],['dias','Dias'],['pessoas','Pessoas'],['avisos','Avisos'],['hist','Histórico'],['artistas','Artistas']];
+  var t=isAdmin()?[['geral','Geral'],['dias','Dias'],['pessoas','Pessoas'],['avisos','Avisos'],['hist','Histórico'],['artistas','Artistas']]:[['dias','Dias']].concat(canEdit('van')?[['artistas','Artistas']]:[]);
   h+='<nav class="tabs" aria-label="Portal ADM"><div class="tabs-in">'+t.map(function(x){return '<button type="button" data-adm="'+x[0]+'"'+(T===x[0]?' aria-current="page"':'')+'>'+(IC_TAB[{geral:'painel',dias:'roteiro',pessoas:'agenda',avisos:'avisos',artistas:'artistas',hist:'hist'}[x[0]]])+x[1]+'</button>'}).join('')+'</div></nav>';
   if(ui.dirty) h+=adminBar();
   if(ui.sheet) h+=sheetView();
@@ -755,22 +772,28 @@ function admGeral(){
   pend.forEach(function(x){h+='<button type="button" class="arow warn" data-admday="'+x[0]+'"><span class="t">'+IC_ALERT.replace('<svg','<svg width="16" height="16"')+'</span><span class="m"><b>'+esc(x[1])+'</b><small>'+x[2]+'</small></span><span class="go">Abrir ›</span></button>'});
   return h+'</div></section>';
 }
+function editWho(){var ks=editKinds();if(isAdmin()&&ks.length>=5)return '';var all=Object.keys(editRules());
+  return '<div class="note" style="margin-top:6px">'+(ks.length?'Você atualiza: '+ks.map(function(k){return EDIT_NAME[k].toLowerCase()}).join(', ')+'. ':'')+'O resto aparece só para consulta (toque para ver quem atualiza).</div>'}
+function bagsView(d){var b=d&&d.bags||[];if(!b.length)return '';return '<section class="sec"><div class="sec-h"><h2>Bagagens e materiais</h2><span class="tape"></span></div>'+b.map(function(x){return '<div class="flag info">'+IC_INFO+'<span>'+esc(x.text)+(x.updated?' <span class="card-n" style="display:inline">· '+esc(x.updated.by)+'</span>':'')+'</span></div>'}).join('')+'</section>'}
+function editBtnMount(){if(ui.mode==='admin'||ui.realMe||isAdmin()||!isEditor())return;var lo=app.querySelector('header [data-act="logout"]')||app.querySelector('[data-act="logout"]');if(!lo||app.querySelector('[data-act="go-edit"]'))return;
+  lo.insertAdjacentHTML('afterend','<button type="button" class="admin-link" data-act="go-edit" style="margin-left:6px">Editar logística</button>')}
 function whoShort(w){if(!w||w==='all')return 'Equipe toda';if(w.only)return names(w.only).join(', ');return 'Todos, exceto '+names(w.except).join(', ')}
 function admDias(){
   var d=day(ui.day), h='<nav class="strip" aria-label="Dias">';
   S.days.forEach(function(x){h+='<button type="button" class="daychip" data-day="'+x.id+'" aria-pressed="'+(x.id===d.id)+'"><span class="n">'+x.dd+'/'+x.mm+'</span><span class="c">'+esc(shortCity(x))+'</span></button>'});
-  h+='<button type="button" class="daychip" data-act="add-day" style="border-style:dashed"><span class="n">+</span><span class="c">Novo dia</span></button></nav>';
-  h+='<section class="ablock"><div class="ablock-h"><h2>'+d.dd+'/'+d.mm+' · '+esc(d.city)+' '+esc(d.uf)+'</h2><span class="sp"></span><button class="edit" data-act="edit-day">Editar dia</button></div>';
+  h+=(canEdit('roteiro')?'<button type="button" class="daychip" data-act="add-day" style="border-style:dashed"><span class="n">+</span><span class="c">Novo dia</span></button>':'')+'</nav>';
+  h+='<section class="ablock"><div class="ablock-h"><h2>'+d.dd+'/'+d.mm+' · '+esc(d.city)+' '+esc(d.uf)+'</h2><span class="sp"></span>'+(canEdit('roteiro')?'<button class="edit" data-act="edit-day">Editar dia</button>':'')+'</div>'+editWho();
   (d.dayNotes||[]).forEach(function(n){h+='<div class="flag info">'+IC_INFO+'<span>'+esc(n)+'</span></div>'});
   if(!(d.dayNotes||[]).length) h+='<div class="note">Sem avisos do dia. Use “Editar dia” para adicionar.</div>';
   h+='</section>';
-  h+=blk('Eventos','add-event',d.events.map(function(e,i){return row('edit-event',i,({show:'Show',tv:'TV',pocket:'Pocket',part:'Part.'}[e.type]||e.type),e.name,[e.venue?e.venue:'local n/i','show '+(e.showtime||'n/i')].join(' · '))}));
-  h+=blk('Etapas','add-step',d.steps.filter(function(x){return !x.link}).map(function(x){return row('edit-step',x.id,x.time,x.title,whoShort(x.who)+(x.note?' · '+x.note:''),x.modal,x.updated)}));
+  h+=blk('Eventos',canEdit('roteiro')&&'add-event',d.events.map(function(e,i){return row('edit-event',i,({show:'Show',tv:'TV',pocket:'Pocket',part:'Part.'}[e.type]||e.type),e.name,[e.venue?e.venue:'local n/i','show '+(e.showtime||'n/i')].join(' · '))}));
+  h+=blk('Etapas',canEdit('roteiro')&&'add-step',d.steps.filter(function(x){return !x.link}).map(function(x){return row('edit-step',x.id,x.time,x.title,whoShort(x.who)+(x.note?' · '+x.note:''),x.modal,x.updated)}));
   if(d.steps.some(function(x){return x.link}))h+='<div class="note" style="margin-top:6px">Ônibus, voos e vans entram na timeline a partir do próprio cadastro abaixo. Edite lá e todas as telas mudam juntas.</div>';
-  h+=blk('Voos','add-flight',d.flights.map(function(f){return row('edit-flight',f.id,f.dep||'--',(f.cia||'Cia n/i')+' '+(f.num||'')+' · '+(f.from||'?')+' → '+(f.to||'?'),whoShort(f.who),f.kind,f.updated)}));
-  h+=blk('Ônibus','add-bus',(d.buses||[]).map(function(b,i){return row('edit-bus',i,b.dep||'--',b.label+' · '+b.from+' → '+b.to,[b.dist,b.dur].concat(b.stops||[]).filter(Boolean).join(' · '),'onibus',b.updated)}));
-  h+=blk('Vans','add-van',d.vans.map(function(v){return row('edit-van',v.id,v.time,v.name,v.people||'','van',v.updated)}));
-  h+=blk('Hotel',d.hotel?null:'edit-hotel',d.hotel?[row('edit-hotel','x','',d.hotel.name,(d.rooming.length?d.rooming.length+' quartos na rooming list':'Rooming list vazia')+(d.hotel.checkin?' · check-in '+d.hotel.checkin:''),'hotel',d.hotel.updated)]:[]);
+  h+=blk('Voos',canEdit('voo')&&'add-flight',d.flights.map(function(f){return row('edit-flight',f.id,f.dep||'--',(f.cia||'Cia n/i')+' '+(f.num||'')+' · '+(f.from||'?')+' → '+(f.to||'?'),whoShort(f.who),f.kind,f.updated)}));
+  h+=blk('Ônibus',canEdit('bus')&&'add-bus',(d.buses||[]).map(function(b,i){return row('edit-bus',i,b.dep||'--',b.label+' · '+b.from+' → '+b.to,[b.dist,b.dur].concat(b.stops||[]).filter(Boolean).join(' · '),'onibus',b.updated)}));
+  h+=blk('Vans',canEdit('van')&&'add-van',d.vans.map(function(v){return row('edit-van',v.id,v.time,v.name,v.people||'','van',v.updated)}));
+  h+=blk('Hotel',d.hotel||!canEdit('hotel')?null:'edit-hotel',d.hotel?[row('edit-hotel','x','',d.hotel.name,(d.rooming.length?d.rooming.length+' quartos na rooming list':'Rooming list vazia')+(d.hotel.checkin?' · check-in '+d.hotel.checkin:''),'hotel',d.hotel.updated)]:[]);
+  h+=blk('Bagagens e materiais',canEdit('bagagem')&&'add-bag',(d.bags||[]).map(function(x){return row('edit-bag',x.id,'',x.text,x.updated?'por '+x.updated.by:'',null,x.updated)}));
   return h;
 }
 function blk(title,addAct,rows){
@@ -819,7 +842,7 @@ function admHistorico(){
 }
 function admArtistas(){
   var pv=artistasView('full'), d=S.artists.days.filter(function(x){return x.id===ui.aday})[0];
-  var ed=d&&!d.pending?blk('Carros e motoristas · '+d.dd+'/'+d.mm,'add-veh',(d.vehicles||[]).map(function(v,i){return row('edit-veh',i,'',v.veh,[v.driver||'motorista n/i',v.phone||'telefone a atualizar',v.plate||'placa a atualizar'].join(' · '),'van',v.updated)})):'';
+  var ed=d&&!d.pending?blk('Carros e motoristas · '+d.dd+'/'+d.mm,canEdit('van')&&'add-veh',(d.vehicles||[]).map(function(v,i){return row('edit-veh',i,'',v.veh,[v.driver||'motorista n/i',v.phone||'telefone a atualizar',v.plate||'placa a atualizar'].join(' · '),'van',v.updated)})):'';
   var i=pv.indexOf('</nav>')+6;
   pv=pv+'<section class="sec"><div class="sec-h"><h2>Segurança · reconhecimento e escolta</h2><span class="tape"></span></div></section>'+segView0().replace(/<nav class="strip"[\s\S]*?<\/nav>/,'');
   return '<div class="flag info" style="margin-top:16px">'+IC_INFO+'<span>Prévia do portal artístico completo. Escolha o dia na faixa abaixo e preencha placas e telefones dos motoristas perto do show. O restante desta parte ainda é editado pela produção no grupo.</span></div>'+pv.slice(0,i)+ed+pv.slice(i)+roomingArt();
@@ -844,6 +867,9 @@ function sheetView(){
     h+='<div class="fld"><label for="f-note">Observação</label><textarea id="f-note" name="note">'+esc(st.note)+'</textarea></div>';
     h+='<div class="fld"><label for="f-mode">Quem vai</label><select id="f-mode" name="mode"><option value="all"'+(mode==='all'?' selected':'')+'>Equipe toda</option><option value="only"'+(mode==='only'?' selected':'')+'>Só os marcados</option><option value="except"'+(mode==='except'?' selected':'')+'>Todos, exceto os marcados</option></select></div>';
     h+='<div class="picks">'+S.people.map(function(p){return '<label><input type="checkbox" name="ppl" value="'+p.id+'"'+(sel.indexOf(p.id)>=0?' checked':'')+'>'+esc(p.name)+'</label>'}).join('')+'</div>';
+  } else if(s.kind==='bag'){
+    var bg=s.id?find(d.bags||[],s.id):{text:''};
+    h+='<h3>'+(s.id?'Editar':'Novo')+' · bagagens e materiais · '+d.dd+'/'+d.mm+'</h3><div class="fld"><label for="f-text">Informação</label><textarea id="f-text" name="text" required placeholder="Malas no bus antes de sair para o show">'+esc(bg.text)+'</textarea></div>';
   } else if(s.kind==='notice'){
     var n=s.id?find(S.notices,s.id):{text:'',level:'urg'};
     h+='<h3>'+(s.id?'Editar aviso':'Novo aviso')+'</h3><div class="fld"><label for="f-text">Aviso</label><textarea id="f-text" name="text" required>'+esc(n.text)+'</textarea></div>';
@@ -898,10 +924,14 @@ function sheetView(){
   return h+'</form></div></div>';
 }
 function find(arr,id){for(var i=0;i<arr.length;i++) if(arr[i].id===id) return arr[i]; return null}
-var KIND={step:'etapa',van:'van',notice:'aviso',hotel:'hotel',day:'dia',event:'evento',flight:'voo',bus:'ônibus',gyn:'bus saindo de Goiânia',clt:'aviso CLT',veh:'carro do artístico',person:'pessoa',check:'item do checklist'};
+var KIND={bag:'bagagens e materiais',step:'etapa',van:'van',notice:'aviso',hotel:'hotel',day:'dia',event:'evento',flight:'voo',bus:'ônibus',gyn:'bus saindo de Goiânia',clt:'aviso CLT',veh:'carro do artístico',person:'pessoa',check:'item do checklist'};
 function logH(action,what,dd){var p=person(ui.me);S.history=S.history||[];S.history.unshift({at:new Date().toISOString(),by:p?p.name:'Produção',action:action,what:what,day:dd||'',pub:false})}
 function saveSheet(form){
+  if(ui.sheet&&!sheetAllowed(ui.sheet.kind)){ui.sheet=null;flash('Sem permissão para este item.');return}
   var s=ui.sheet, d=day(ui.day), fd=new FormData(form), g=function(k){return (fd.get(k)||'').toString().trim()};
+  if(s.kind==='bag'){
+    d.bags=d.bags||[];var bg=s.id?find(d.bags,s.id):{id:uid('b')};bg.text=g('text');bg.by=(person(ui.me)||{}).name||'';stamp(bg);if(!s.id)d.bags.push(bg);
+  } else
   if(s.kind==='step'){
     var st=s.id?find(d.steps,s.id):{id:uid('s')};
     var mode=g('mode'), ppl=fd.getAll('ppl');
@@ -951,7 +981,8 @@ function saveSheet(form){
 }
 function tkey(t){var m=/(\d{1,2})h(\d{2})?/.exec(t||'');if(!m)return 9999;var h=+m[1];if(h<1)h+=24;return h*60+(+m[2]||0)}
 function deleteItem(){
-  var s=ui.sheet,d=day(ui.day);
+  var s=ui.sheet,d=day(ui.day);if(!s||!sheetAllowed(s.kind)){ui.sheet=null;flash('Sem permissão para este item.');return}
+  if(s.kind==='bag'){d.bags=(d.bags||[]).filter(function(x){return x.id!==s.id})}
   if(s.kind==='step') d.steps=d.steps.filter(function(x){return x.id!==s.id});
   if(s.kind==='notice') S.notices=S.notices.filter(function(x){return x.id!==s.id});
   if(s.kind==='van') d.vans=d.vans.filter(function(x){return x.id!==s.id});
@@ -1230,9 +1261,10 @@ function quRun(){
       var yr=new Date().getFullYear();
       var prompt='Você atualiza o app de logística da turnê Hugo & Guilherme (ano '+yr+'). Leia o MATERIAL e devolva SÓ JSON no formato {"summary":"1 frase em português","changes":[...]}. Cada change é um destes:\n'+
         '{"op":"notice","text":"aviso curto","level":"urg"|"info"}\n'+
-        '{"op":"day","date":"dd/mm","city":"Cidade","uf":"UF","show":{"name":"","venue":"","showtime":"23h45","soundcheck":""} ou null,"steps":[{"time":"14h00","title":"","note":"","modal":"onibus|voo|jato|van|hotel|palco|aeroporto|chegada|livre","teams":["all"] ou lista de "tec","band","prod","cont","om","seg","artc","trip","bus","people":["nomes citados nominalmente para este transporte"] (opcional),"notPeople":["nomes que o material tira deste transporte"] (opcional)}],"hotel":{"for":"equipe"|"artistico"|"ambos","name":"","address":"","phone":"","maps":"link https do mapa","distance":"hotel x evento","checkin":"","checkout":""} ou null,"rooming":{"for":"equipe"|"artistico","rooms":[{"room":"nº do quarto ou vazio","who":"nomes (só apelido/nome, sem CPF)","type":"tipo"}]} ou null,"notes":["observação"]}\n'+
+        '{"op":"day","date":"dd/mm","city":"Cidade","uf":"UF","show":{"name":"","venue":"","showtime":"23h45","soundcheck":""} ou null,"steps":[{"time":"14h00","title":"","note":"","modal":"onibus|voo|jato|van|hotel|palco|aeroporto|chegada|livre","teams":["all"] ou lista de "tec","band","prod","cont","om","seg","artc","trip","bus","people":["nomes citados nominalmente para este transporte"] (opcional),"notPeople":["nomes que o material tira deste transporte"] (opcional)}],"hotel":{"for":"equipe"|"artistico"|"ambos","name":"","address":"","phone":"","maps":"link https do mapa","distance":"hotel x evento","checkin":"","checkout":""} ou null,"rooming":{"for":"equipe"|"artistico","rooms":[{"room":"nº do quarto ou vazio","who":"nomes (só apelido/nome, sem CPF)","type":"tipo"}]} ou null,"notes":["observação"],"bags":["informação de malas, bagagens, instrumentos e materiais"]}\n'+
         '{"op":"step","date":"dd/mm","id":"id entre colchetes de um item que JÁ EXISTE","time":"novo horário ou vazio","note":"só a informação nova","teams":["all"] ou lista de setores,"people":[] e "notPeople":[] opcionais como acima}\n'+
         'LEITURA INTERNA (obrigatória): antes de criar qualquer horário, compare com DIAS JÁ NO APP. Se o material fala de algo que já existe (o mesmo ônibus, van, voo, jato, show ou saída, mesmo que escrito de outro jeito, ex.: "bus" = ônibus, ou que só mude o horário), use op "step" com o id desse item e NÃO repita o item em "day". Uma instrução para um setor sobre um item existente (ex.: "ligar o ar do bus na saída às 22h30, enviar para os motoristas") é op "step" no item da saída do ônibus, com note "Ligar o ar do bus na saída" e teams ["bus"]. Só crie horário novo em "day" quando não houver item correspondente.\n'+
+        'FONTES OFICIAIS: roteiro do dia = Dandan, Julia e Luizmar; voos, jato, hotel, rooming, ônibus e rota = Dandan e Julia; vans, placas e telefones dos motoristas = Dandan, Julia e Rafael (segurança); bagagens e materiais = Dandan, Julia, Japa e Jeff. Se o MATERIAL mostrar que a informação veio de outra pessoa e ela contradiz o que já está no app num desses assuntos, não mude o item: mande um notice level "info" pedindo confirmação à fonte oficial. Avisos de uniforme não entram no app (ignore).\n'+
         'QUEM VAI EM QUAL TRANSPORTE (leitura de continuidade, vale para todos): Rafa (videomaker) e Cica (fotógrafo), setor Conteúdo, vão sempre na van de Produção, principalmente na saída para o show; o app já faz isso sozinho, não precisa repetir. Quem embarca no jato com os artistas segue com eles no carro do hangar até o evento e não pega van; o app já faz isso também. Quem chega por um transporte segue no transporte ligado a ele (ex.: quem chega no ônibus da banda segue com a banda). O que a produção (Dandan, Julia, Luizmar) escrever nominalmente prevalece: se o material disser que uma pessoa vai em outro carro/van/jato, use "people" naquele transporte e "notPeople" no transporte de onde ela sai (op "step" no item existente).\n'+
         'Hotel: "equipe" = produção, banda e técnica; "artistico" = artistas, assessores, segurança, tripulação e staff. Se o material não disser a data, use a data do show cuja cidade aparece no material; se não houver cidade, use o próximo show. FIM DE SEMANA ATUAL: '+quWeekendCtx()+'. Rooming: só use "room" quando o material trouxer o número real do quarto (números de linha 1, 2, 3 não são quarto). Lista de quartos sem data: use a data do próximo show em que o hotel citado aparece em DIAS JÁ NO APP (ou o próximo show). Só a lista de quartos do artístico/staff sem hotel e sem data é a lista padrão e não vira change. Não repita aviso que já existe em AVISOS JÁ NO APP: se for o mesmo assunto atualizado, mande o texto novo completo que o app substitui.\n'+
         'Regras: use só o que está escrito, nunca invente horário, nome ou lugar; horários no formato 14h00; um change "day" por data, só com os horários que o material traz para aquela data (o app junta com os que já existem); não inclua CPF nem data de nascimento; se nada servir, changes vazio.\n\nDIAS JÁ NO APP:\n'+quContext()+'\n\nAVISOS JÁ NO APP:\n'+(S.notices||[]).slice(0,30).map(function(x){return '- '+String(x.text).slice(0,160)}).join('\n')+'\n\nMATERIAL:\n'+src;
@@ -1296,6 +1328,7 @@ function quMergeStep(d,s){var o={time:String(s.time||''),modal:MODAL[s.modal]?s.
 function quApply(){
   var P=QU.plan,n=0;if(!P)return;
   (P.changes||[]).forEach(function(c){if(c._off)return;
+    if(c.op==='notice'&&UNIF.test(c.text||''))return;
     if(c.op==='notice'){var sim=(S.notices||[]).filter(function(x){return quSim(x.text,c.text)>=0.55})[0];if(sim){if(quNorm(sim.text)!==quNorm(c.text)){sim.text=String(c.text).slice(0,300);if(c.level==='urg')sim.level='urg';stamp(sim);logH('Atualizou','Aviso: '+String(c.text).slice(0,80));n++}return}S.notices.unshift({id:'n'+Date.now().toString(36)+n,text:String(c.text).slice(0,300),level:c.level==='urg'?'urg':'info'});stamp(S.notices[0]);logH('Adicionou','Aviso: '+String(c.text).slice(0,80));n++;return}
     if(c.op==='step'){var fs=quFindStep(c),sd=fs&&fs.d,ss=fs&&fs.s;if(!ss)return;
       var mv=c.time&&/\d/.test(c.time)&&c.time!==ss.time,old0=ss.time;if(mv){ss.time=String(c.time);quPropTime(sd,ss,old0)}if(c.note)quAddNote(ss,c.note,c.teams);quPeopleApply(ss,c);stamp(ss);if(mv)quPlace(sd,ss);
@@ -1312,7 +1345,8 @@ function quApply(){
         if(hf!=='equipe'&&ad){if(ad.hotel&&ad.hotel.name&&quNorm(ad.hotel.name)!==quNorm(c.hotel.name)&&!/consta|n\/i/i.test(ad.hotel.note||''))ad.hotel=null;ad.hotel=ad.hotel||{name:'',address:'',phone:'',contact:'',checkin:'',checkout:'',maps:null,note:''};['name','address','phone','checkin','checkout'].forEach(function(k){if(c.hotel[k])ad.hotel[k]=String(c.hotel[k])});if(mp)ad.hotel.maps=mp;if(/consta/i.test(ad.hotel.note||''))ad.hotel.note=''}}
       if(c.rooming&&c.rooming.rooms&&c.rooming.rooms.length){var rr=c.rooming.rooms.map(function(r){return {room:String(r.room||''),who:quRedact(r.who||''),type:String(r.type||'')}}).filter(function(r){return r.who});
         if(c.rooming.for==='artistico'){if(ad)ad.rooms=rr}else d.rooming=rr.map(function(r){return (r.room?r.room+': ':'')+r.who+(r.type?' · '+r.type:'')})}
-      if(c.notes&&c.notes.length)d.dayNotes=c.notes.map(String);
+      if(c.notes&&c.notes.length)d.dayNotes=c.notes.map(String).filter(function(n){return !UNIF.test(n)});
+      if(c.bags&&c.bags.length){d.bags=d.bags||[];c.bags.forEach(function(t){t=String(t||'').trim();if(!t)return;var sm=d.bags.filter(function(x){return quSim(x.text,t)>=0.55})[0];if(sm){sm.text=t;stamp(sm)}else{var nb={id:uid('b'),text:t};stamp(nb);d.bags.push(nb)}})}
       logH('Atualizou',d.dd+'/'+d.mm+' '+d.city+' (pelo texto/PDF enviado)',d.dd+'/'+d.mm);n++}
   });
   var dup=quDedupeAll();
@@ -1577,7 +1611,13 @@ app.addEventListener('click',function(e){
   if(a==='end-preview'){ui.me=ui.realMe;ui.realMe=null;ui.mode='admin';render();window.scrollTo(0,0);return}
   if(a==='logout'){ui.chatOpen=false;ui.chatDraft='';ui.loginCat=null;ui.realMe=null;ui.mode='team';LS.set('mode','team');ui.me=null;ui.loginPick=null;LS.set('me',null);render();return}
   if(a==='mine-on'||a==='mine-off'){ui.onlyMine=a==='mine-on';LS.set('onlyMine',ui.onlyMine);render();return}
-  if(!isAdmin()) return;
+  if(a==='go-edit'&&isEditor()){ui.mode='admin';ui.admTab=isAdmin()?ui.admTab:'dias';LS.set('mode','admin');render();window.scrollTo(0,0);return}
+  if(a==='leave-edit'){ui.mode='team';LS.set('mode','team');render();window.scrollTo(0,0);return}
+  if(!isEditor()) return;
+  if(ACT_KIND[a]&&!canEdit(ACT_KIND[a])){flash('Quem atualiza '+EDIT_NAME[ACT_KIND[a]].toLowerCase()+': '+names(editRules()[ACT_KIND[a]]).join(', ')+'.');return}
+  if(a==='add-bag'){ui.sheet={kind:'bag'};render();return}
+  if(a==='edit-bag'){ui.sheet={kind:'bag',id:t.dataset.id};render();return}
+  if(!isAdmin()&&!ACT_KIND[a]&&['delete-item','discard','publish','edit-hotel'].indexOf(a)<0)return;
   if(a==='go-admin'){ui.mode='admin';LS.set('mode','admin');render();window.scrollTo(0,0);return}
   if(a==='preview'){var v=document.getElementById('f-viewas').value;ui.realMe=ui.me;ui.me=v;ui.mode='team';ui.tab='roteiro';ui.artTab='dia';render();window.scrollTo(0,0);return}
   var SH={'add-day':['day'],'edit-day':['day',1],'add-event':['event'],'edit-event':['event',1],'add-flight':['flight'],'edit-flight':['flight',1],'edit-bus':['bus',1],'add-bus':['bus'],'edit-gyn':['gyn'],'edit-clt':['clt'],'add-veh':['veh'],'edit-veh':['veh',1],'add-person':['person'],'edit-person':['person',1],'add-check':['check'],'edit-check':['check',1]};
