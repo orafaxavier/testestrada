@@ -81,14 +81,43 @@ function syncDay(d){d.steps=d.steps||[];d.buses=d.buses||[];d.flights=d.flights|
     link('fl:'+f.id,t,md,function(x){return x.time===t},null)});
   d.vans.forEach(function(v){var ks=quVanKey(v.name);link('van:'+v.id,lnkTime(v.time),'van',function(x){return x.time===lnkTime(v.time)&&ks.some(function(k){return quVanKey(x.title).indexOf(k)>=0||quNorm(x.note||'').indexOf(k)>=0})},null)});
   var keys={};d.buses.forEach(function(b){keys['bus:'+b.id]=1});d.flights.forEach(function(f){keys['fl:'+f.id]=1});d.vans.forEach(function(v){keys['van:'+v.id]=1});
-  d.steps=d.steps.filter(function(x){if(!x.link)return true;if(keys[x.link])return true;return !/^bus:/.test(x.link)?(delete x.link,true):false})}
-function syncAll(){(S.days||[]).forEach(syncDay)}
-function render(){syncAll();render0();liveAfter()}
+  d.steps=d.steps.filter(function(x){if(!x.link||/^ride:/.test(x.link))return true;if(keys[x.link])return true;return !/^bus:/.test(x.link)?(delete x.link,true):false})}
+/* ---------- quem vai em qual transporte (continuidade) ----------
+   Rafa (videomaker) e Cica (fotógrafo), setor Conteúdo: sempre na van de Produção.
+   Quem embarca no jato com os artistas segue com eles (carro do hangar ao evento) e sai das vans seguintes.
+   Ajuste manual do ADM ou pessoa citada no material (rideLock) prevalece. */
+var RIDE_HOME={cont:'producao'};
+function rideAdd(w,id){if(!w||w==='all')return w||'all';if(w.only){if(w.only.indexOf(id)<0)w.only.push(id);return w}if(w.except){w.except=w.except.filter(function(x){return x!==id});return w.except.length?w:'all'}return w}
+function rideDrop(w,id){if(!w||w==='all')return {except:[id]};if(w.only){w.only=w.only.filter(function(x){return x!==id});return w}if(w.except){if(w.except.indexOf(id)<0)w.except.push(id);return w}return w}
+function rideKeys(d){var keys=[],add=0,prev=-1;d.steps.forEach(function(x){var k=quMin(x.time);if(k==null)k=prev<0?0:prev;if(k+add<prev)add+=1440;keys.push(k+add);prev=k+add});return keys}
+function rideAt(d,keys,t){var m=quMin(t);if(m==null)return null;var late=keys.some(function(k){return k>=720});if(m<360&&late&&keys.length&&keys[0]>=360)m+=1440;return m}
+function rideLand(d,f){var ad=(S.artists&&S.artists.days||[]).filter(function(x){return x.dd===d.dd&&x.mm===d.mm})[0],tl=ad&&ad.timeline||[],mi=-1,ji=-1;
+  tl.forEach(function(x,i){if(x.main&&mi<0)mi=i});tl.forEach(function(x,i){if(x.modal==='jato'&&(mi<0||i<mi))ji=i});
+  if(ji>=0){var nx=tl[ji+1];if(nx&&(nx.modal==='chegada')&&/pouso/i.test(nx.title||''))return lnkTime(nx.time);var pm=/pouso\s*(\d{1,2}h\d{2})/i.exec(tl[ji].note||'');if(pm)return lnkTime(pm[1])}
+  return lnkTime(f.arr)||lnkTime(f.dep)}
+function syncRide(d){if(!d.steps.length||!S.people)return;
+  d.steps=d.steps.filter(function(x){return !/^ride:/.test(x.link||'')||x.rideLock});
+  var keys=rideKeys(d),show=null;d.steps.forEach(function(x,i){if(x.modal==='palco'&&show==null)show=keys[i]});
+  var jets=(d.flights||[]).filter(function(f){return f.kind==='jato'}).map(function(f){return {f:f,k:rideAt(d,keys,f.dep)}}).filter(function(j){return j.k!=null&&(show==null||j.k<show)});
+  function onJetBefore(pid,k){return jets.some(function(j){return applies(j.f.who,pid)&&j.k<k})}
+  d.steps.forEach(function(x,i){if(x.modal!=='van'||x.rideLock||/^ride:/.test(x.link||''))return;var ks=quVanKey(x.title+' '+(x.note||''));
+    S.people.forEach(function(p){var home=RIDE_HOME[p.team];
+      if(p.team!=='art'&&onJetBefore(p.id,keys[i])){if(applies(x.who,p.id))x.who=rideDrop(x.who,p.id);return}
+      if(home&&ks.indexOf(home)>=0&&!applies(x.who,p.id))x.who=rideAdd(x.who,p.id);else if(home&&ks.length&&ks.indexOf(home)<0&&!(x.who&&x.who.only)&&applies(x.who,p.id))x.who=rideDrop(x.who,p.id)})});
+  if(show==null)return;
+  jets.forEach(function(j){var key='ride:'+j.f.id;if(d.steps.some(function(x){return x.link===key}))return;
+    var pax=S.people.filter(function(p){return p.team!=='art'&&applies(j.f.who,p.id)}).map(function(p){return p.id});if(!pax.length)return;
+    var r={id:'sride'+String(j.f.id).replace(/[^a-z0-9]/gi,''),link:key,modal:'van',time:rideLand(d,j.f),title:'Carro com os artistas: hangar → evento',note:'Quem vai no jato segue com os artistas até o evento e não pega as vans.',who:{only:pax}};
+    quPlace(d,r)})}
+function syncAll(){(S.days||[]).forEach(function(d){syncDay(d);syncRide(d)})}
+var stripSeen={};
+function centerStrips(){[].forEach.call(document.querySelectorAll('nav.strip'),function(nv){var b=nv.querySelector('[aria-pressed="true"]');if(!b)return;var key=(nv.getAttribute('aria-label')||'')+'|'+(ui.mode||'')+'|'+(ui.tab||'')+'|'+(ui.artTab||''),id=b.dataset.day||b.dataset.aday||'';if(stripSeen[key]===id&&nv.scrollLeft)return;stripSeen[key]=id;nv.scrollLeft=Math.max(0,b.offsetLeft-nv.offsetLeft-(nv.clientWidth-b.offsetWidth)/2)})}
+function render(){syncAll();render0();liveAfter();try{centerStrips()}catch(e){}}
 function render0(){
   document.documentElement.classList.toggle('loginbg',!ui.me);
   if(!ui.me){document.documentElement.classList.remove('th-adm','th-art')}
   if(!ui.me){app.innerHTML=loginView();bindLogin();return}
-  if(!ui.day){ui.day=pickToday()}
+  if(!ui.day||ui.dayK!==todayKey()){ui.day=pickToday();ui.dayK=todayKey()}
   var th=ui.mode==='admin'&&isAdmin()?'th-adm':(isArtist()?'th-art':'');
   document.documentElement.classList.toggle('th-adm',th==='th-adm');document.documentElement.classList.toggle('th-art',th==='th-art');
   var rs=document.documentElement.style,sc=(!th&&ui.me)?team(person(ui.me)).color:null;
@@ -120,7 +149,7 @@ function render0(){
   if(ui.toast) h+='<div class="toast" role="status">'+esc(ui.toast)+'</div>';
   app.innerHTML=h;
 }
-function pickToday(){var n=new Date();var dd=('0'+n.getDate()).slice(-2),mm=('0'+(n.getMonth()+1)).slice(-2);for(var i=0;i<S.days.length;i++){if(S.days[i].dd===dd&&S.days[i].mm===mm)return S.days[i].id}return S.days[0].id}
+function pickToday(){var k=todayKey(),D=S.days||[];var t=D.filter(function(d){return dkey(d)===k&&isShowDay(d)})[0];if(t)return t.id;var n=D.filter(function(d){return dkey(d)>=k&&isShowDay(d)})[0]||D.filter(function(d){return dkey(d)>=k})[0]||D[D.length-1];return n?n.id:null}
 
 function loginView(){
   var h='<div class="wrap login"><img class="lockup" src="'+LOGO.stack+'" alt="H&amp;G Colecionando Momentos">';
@@ -342,7 +371,7 @@ function sectorPanel(p){
   var kw=tk==='band'?/mala|uniforme|instrument|mochila|passagem|banda|bag/i:tk==='tec'?/t[ée]cnica|carga|cargo|montagem|backline|palco|cen[áa]rio|mala|uniforme|fogos/i:null;
   var h=(tk==='tec'?liveBlock(['ponto'],'Ao vivo · ponto'):'')+'<section class="sec"><div class="sec-h"><h2>Seu setor · '+esc(T.name)+'</h2><span class="tape"></span></div><div class="seclist">';
   days.forEach(function(d){
-    var vans=d.vans.filter(function(v){return v.team===tk||(tk==='tec'&&/cargo/i.test(v.name))});
+    var vans=d.vans.filter(function(v){if(v.team===tk||(tk==='tec'&&/cargo/i.test(v.name)))return true;if(RIDE_HOME[tk]&&quVanKey(v.name).indexOf(RIDE_HOME[tk])>=0){var ls=d.steps.filter(function(x){return x.link==='van:'+v.id})[0];return !ls||applies(ls.who,p.id)}return false});
     var ev=d.events.filter(function(e){return e.type==='show'})[0];
     var notes=(d.dayNotes||[]).filter(function(n){return !kw||kw.test(n)});
     h+='<div class="secitem"><div class="k">'+esc(dateInfo(d).wd)+', '+d.dd+'/'+d.mm+' · '+esc(d.city)+'</div>';
@@ -629,7 +658,7 @@ function artResumo(d){
    ['Volta / próxima logística',a?a.title.replace(/^Pós-show: /,'')+(a.vehicle?' · '+a.vehicle:''):'n/i',a&&a.dep?a.dep:'']];
   return '<section class="sec"><div class="sec-h"><h2>Em ordem</h2><span class="tape"></span></div><ol class="prio">'+rows.map(function(r){return '<li><span><span class="k">'+esc(r[0])+'</span><br><span class="v">'+(r[1]==='n/i'?ni():esc(r[1]))+'</span></span><span class="tm">'+esc(r[2]||'')+'</span></li>'}).join('')+'</ol></section>';
 }
-function pickArtDay(){var A=S.artists.days,n=new Date(),k=(n.getMonth()+1)*100+n.getDate();for(var i=0;i<A.length;i++){if(+A[i].mm*100+ +A[i].dd>=k)return A[i].id}return A[A.length-1].id}
+function pickArtDay(){var A=S.artists.days,k=todayKey();var t=A.filter(function(x){return dkey(x)>=k})[0]||A[A.length-1];return t.id}
 function renderArt(){
   var p=person(ui.me), T=ui.artTab||'dia', L=acc()==='art'?'simple':'full';
   var h=(ui.realMe?'<div class="preview-bar"><span>Visualizando como '+esc(p.name)+'</span><button class="btn" data-act="end-preview">Voltar ao portal</button></div>':'')+'<div class="wrap"><header class="art-head"><div class="row"><img class="art-logo" src="'+LOGO.hg+'" alt="Hugo &amp; Guilherme"><span style="flex:1"></span><button type="button" class="me-chip" style="margin-left:0" data-act="logout" aria-label="Trocar usuário">'+av(p)+esc(p.name)+'</button></div><div class="eyebrow">'+(L==='simple'?'Portal dos artistas':'Portal artístico · completo')+' · Colecionando Momentos</div></header>';
@@ -877,7 +906,7 @@ function saveSheet(form){
     var st=s.id?find(d.steps,s.id):{id:uid('s')};
     var mode=g('mode'), ppl=fd.getAll('ppl');
     st.time=g('time');st.modal=g('modal');st.title=g('title');st.note=g('note');
-    st.who=mode==='all'||!ppl.length?'all':(mode==='only'?{only:ppl}:{except:ppl});
+    var oldWho=JSON.stringify(st.who);st.who=mode==='all'||!ppl.length?'all':(mode==='only'?{only:ppl}:{except:ppl});if(s.id&&oldWho!==JSON.stringify(st.who))st.rideLock=1;
     stamp(st); if(!s.id) d.steps.push(st);
     d.steps.sort(function(a,b){return tkey(a.time)-tkey(b.time)});
   } else if(s.kind==='notice'){
@@ -1201,9 +1230,10 @@ function quRun(){
       var yr=new Date().getFullYear();
       var prompt='Você atualiza o app de logística da turnê Hugo & Guilherme (ano '+yr+'). Leia o MATERIAL e devolva SÓ JSON no formato {"summary":"1 frase em português","changes":[...]}. Cada change é um destes:\n'+
         '{"op":"notice","text":"aviso curto","level":"urg"|"info"}\n'+
-        '{"op":"day","date":"dd/mm","city":"Cidade","uf":"UF","show":{"name":"","venue":"","showtime":"23h45","soundcheck":""} ou null,"steps":[{"time":"14h00","title":"","note":"","modal":"onibus|voo|jato|van|hotel|palco|aeroporto|chegada|livre","teams":["all"] ou lista de "tec","band","prod","cont","om","seg","artc","trip","bus"}],"hotel":{"for":"equipe"|"artistico"|"ambos","name":"","address":"","phone":"","maps":"link https do mapa","distance":"hotel x evento","checkin":"","checkout":""} ou null,"rooming":{"for":"equipe"|"artistico","rooms":[{"room":"nº do quarto ou vazio","who":"nomes (só apelido/nome, sem CPF)","type":"tipo"}]} ou null,"notes":["observação"]}\n'+
-        '{"op":"step","date":"dd/mm","id":"id entre colchetes de um item que JÁ EXISTE","time":"novo horário ou vazio","note":"só a informação nova","teams":["all"] ou lista de setores}\n'+
+        '{"op":"day","date":"dd/mm","city":"Cidade","uf":"UF","show":{"name":"","venue":"","showtime":"23h45","soundcheck":""} ou null,"steps":[{"time":"14h00","title":"","note":"","modal":"onibus|voo|jato|van|hotel|palco|aeroporto|chegada|livre","teams":["all"] ou lista de "tec","band","prod","cont","om","seg","artc","trip","bus","people":["nomes citados nominalmente para este transporte"] (opcional),"notPeople":["nomes que o material tira deste transporte"] (opcional)}],"hotel":{"for":"equipe"|"artistico"|"ambos","name":"","address":"","phone":"","maps":"link https do mapa","distance":"hotel x evento","checkin":"","checkout":""} ou null,"rooming":{"for":"equipe"|"artistico","rooms":[{"room":"nº do quarto ou vazio","who":"nomes (só apelido/nome, sem CPF)","type":"tipo"}]} ou null,"notes":["observação"]}\n'+
+        '{"op":"step","date":"dd/mm","id":"id entre colchetes de um item que JÁ EXISTE","time":"novo horário ou vazio","note":"só a informação nova","teams":["all"] ou lista de setores,"people":[] e "notPeople":[] opcionais como acima}\n'+
         'LEITURA INTERNA (obrigatória): antes de criar qualquer horário, compare com DIAS JÁ NO APP. Se o material fala de algo que já existe (o mesmo ônibus, van, voo, jato, show ou saída, mesmo que escrito de outro jeito, ex.: "bus" = ônibus, ou que só mude o horário), use op "step" com o id desse item e NÃO repita o item em "day". Uma instrução para um setor sobre um item existente (ex.: "ligar o ar do bus na saída às 22h30, enviar para os motoristas") é op "step" no item da saída do ônibus, com note "Ligar o ar do bus na saída" e teams ["bus"]. Só crie horário novo em "day" quando não houver item correspondente.\n'+
+        'QUEM VAI EM QUAL TRANSPORTE (leitura de continuidade, vale para todos): Rafa (videomaker) e Cica (fotógrafo), setor Conteúdo, vão sempre na van de Produção, principalmente na saída para o show; o app já faz isso sozinho, não precisa repetir. Quem embarca no jato com os artistas segue com eles no carro do hangar até o evento e não pega van; o app já faz isso também. Quem chega por um transporte segue no transporte ligado a ele (ex.: quem chega no ônibus da banda segue com a banda). O que a produção (Dandan, Julia, Luizmar) escrever nominalmente prevalece: se o material disser que uma pessoa vai em outro carro/van/jato, use "people" naquele transporte e "notPeople" no transporte de onde ela sai (op "step" no item existente).\n'+
         'Hotel: "equipe" = produção, banda e técnica; "artistico" = artistas, assessores, segurança, tripulação e staff. Se o material não disser a data, use a data do show cuja cidade aparece no material; se não houver cidade, use o próximo show. FIM DE SEMANA ATUAL: '+quWeekendCtx()+'. Rooming: só use "room" quando o material trouxer o número real do quarto (números de linha 1, 2, 3 não são quarto). Lista de quartos sem data: use a data do próximo show em que o hotel citado aparece em DIAS JÁ NO APP (ou o próximo show). Só a lista de quartos do artístico/staff sem hotel e sem data é a lista padrão e não vira change. Não repita aviso que já existe em AVISOS JÁ NO APP: se for o mesmo assunto atualizado, mande o texto novo completo que o app substitui.\n'+
         'Regras: use só o que está escrito, nunca invente horário, nome ou lugar; horários no formato 14h00; um change "day" por data, só com os horários que o material traz para aquela data (o app junta com os que já existem); não inclua CPF nem data de nascimento; se nada servir, changes vazio.\n\nDIAS JÁ NO APP:\n'+quContext()+'\n\nAVISOS JÁ NO APP:\n'+(S.notices||[]).slice(0,30).map(function(x){return '- '+String(x.text).slice(0,160)}).join('\n')+'\n\nMATERIAL:\n'+src;
       return sample.json(prompt,{modelTier:'complex'}).then(function(v){
@@ -1253,20 +1283,22 @@ function quVanAdd(d,st){if(st.modal!=='van')return;var ks=quVanKey(st.title);if(
   ks.forEach(function(k){if(d.vans.some(function(v){return v.time===st.time&&quNorm(v.name).indexOf(k)>=0}))return;var nm={tecnica:'Van Técnica',producao:'Van Produção',banda:'Van Banda',cargo:'Van Cargo'}[k],tm={tecnica:'tec',producao:'prod',banda:'band',cargo:'nd'}[k];
     d.vans.push({id:'v'+Date.now().toString(36)+k.slice(0,2),name:nm,team:tm,time:st.time,people:st.note||st.title})})}
 function quFindStep(c){var pr=String(c.date||'').split('/'),dd=('0'+pr[0]).slice(-2),mm=('0'+(pr[1]||'')).slice(-2);var d=S.days.filter(function(x){return x.dd===dd&&x.mm===mm})[0];if(!d)return null;var st=d.steps.filter(function(x){return x.id===String(c.id)})[0];return st?{d:d,s:st}:null}
+function quPeopleIds(ns){if(!ns||!ns.length)return [];return ns.map(function(n){var k=quNorm(n);if(!k)return null;var p=S.people.filter(function(p){var a=quNorm(p.name),b=quNorm(p.fullName||'');return a===k||b===k||a.split(' ')[0]===k||b.indexOf(k)===0})[0];return p&&p.id}).filter(Boolean)}
+function quPeopleApply(st,c){var ids=quPeopleIds(c.people);if(!ids.length)return;var base=(c.teams&&c.teams.length&&c.teams.indexOf('all')<0)?(quTeamIds(c.teams).only||[]):(st.who&&st.who.only?st.who.only.slice():[]);ids.forEach(function(i){if(base.indexOf(i)<0)base.push(i)});st.who={only:base};st.rideLock=1;(c.notPeople?quPeopleIds(c.notPeople):[]).forEach(function(i){st.who=rideDrop(st.who,i)})}
 function quMergeStep(d,s){var o={time:String(s.time||''),modal:MODAL[s.modal]?s.modal:'chegada',title:String(s.title||''),note:String(s.note||''),who:quTeamIds(s.teams)};
   var best=null,bl=0;d.steps.forEach(function(x){var l=quSame(x,o);if(l>bl){bl=l;best=x}});var hit=best;
-  if(hit&&bl>=2){var moved=o.time&&o.time!==hit.time,old=hit.time;hit.time=o.time||hit.time;if(moved)quPropTime(d,hit,old);if(bl===3)hit.title=o.title||hit.title;if(o.note)quAddNote(hit,o.note,s.teams);if(s.teams&&s.teams.length&&bl===3)hit.who=o.who;stamp(hit);if(moved)quPlace(d,hit);return}
+  if(hit&&bl>=2){var moved=o.time&&o.time!==hit.time,old=hit.time;hit.time=o.time||hit.time;if(moved)quPropTime(d,hit,old);if(bl===3)hit.title=o.title||hit.title;if(o.note)quAddNote(hit,o.note,s.teams);if(s.teams&&s.teams.length&&bl===3)hit.who=o.who;quPeopleApply(hit,s);stamp(hit);if(moved)quPlace(d,hit);return}
   if(hit&&bl===1){var extra=Object.keys(quToks(o.title)).filter(function(w){return !{saida:1,onibus:1,van:1,voo:1,chegada:1,hotel:1,show:1}[w]&&!quToks(hit.title)[w]}).length;quAddNote(hit,(extra?o.title+(o.note?' ('+o.note+')':''):o.note),s.teams);stamp(hit);return}
   var keys=[],add=0,prev=-1;d.steps.forEach(function(x){var k=quMin(x.time);if(k==null)k=prev<0?0:prev;if(k+add<prev)add+=1440;keys.push(k+add);prev=k+add});
   var m=quMin(o.time),late=keys.some(function(k){return k>=720});if(m!=null&&m<360&&late&&keys.length&&keys[0]>=360)m+=1440;
   var pos=d.steps.length;if(m!=null)for(var i=0;i<keys.length;i++){if(keys[i]>m){pos=i;break}}
-  o.id='s'+Date.now().toString(36)+Math.floor(Math.random()*999);stamp(o);d.steps.splice(pos,0,o);quVanAdd(d,o)}
+  o.id='s'+Date.now().toString(36)+Math.floor(Math.random()*999);quPeopleApply(o,s);stamp(o);d.steps.splice(pos,0,o);quVanAdd(d,o)}
 function quApply(){
   var P=QU.plan,n=0;if(!P)return;
   (P.changes||[]).forEach(function(c){if(c._off)return;
     if(c.op==='notice'){var sim=(S.notices||[]).filter(function(x){return quSim(x.text,c.text)>=0.55})[0];if(sim){if(quNorm(sim.text)!==quNorm(c.text)){sim.text=String(c.text).slice(0,300);if(c.level==='urg')sim.level='urg';stamp(sim);logH('Atualizou','Aviso: '+String(c.text).slice(0,80));n++}return}S.notices.unshift({id:'n'+Date.now().toString(36)+n,text:String(c.text).slice(0,300),level:c.level==='urg'?'urg':'info'});stamp(S.notices[0]);logH('Adicionou','Aviso: '+String(c.text).slice(0,80));n++;return}
     if(c.op==='step'){var fs=quFindStep(c),sd=fs&&fs.d,ss=fs&&fs.s;if(!ss)return;
-      var mv=c.time&&/\d/.test(c.time)&&c.time!==ss.time,old0=ss.time;if(mv){ss.time=String(c.time);quPropTime(sd,ss,old0)}if(c.note)quAddNote(ss,c.note,c.teams);stamp(ss);if(mv)quPlace(sd,ss);
+      var mv=c.time&&/\d/.test(c.time)&&c.time!==ss.time,old0=ss.time;if(mv){ss.time=String(c.time);quPropTime(sd,ss,old0)}if(c.note)quAddNote(ss,c.note,c.teams);quPeopleApply(ss,c);stamp(ss);if(mv)quPlace(sd,ss);
       logH('Atualizou',sd.dd+'/'+sd.mm+' '+ss.time+' '+ss.title+(c.note?': '+String(c.note).slice(0,60):''),sd.dd+'/'+sd.mm);n++;return}
     if(c.op==='day'){var pr=String(c.date).split('/'),dd=('0'+pr[0]).slice(-2),mm=('0'+pr[1]).slice(-2);
       var d=S.days.filter(function(x){return x.dd===dd&&x.mm===mm})[0];
@@ -1309,14 +1341,20 @@ function artRooms(d){var rs=d.rooms&&d.rooms.length?d.rooms:null;var p=person(ui
   h+=lst.map(function(x){var who=String(x.who||'').replace(/\s*\([^)]*\)/g,'').split('+').map(function(n){return n.trim().split(' ')[0]}).join(' + ');return '<div class="car"><span><b>'+(x.room?esc(x.room):'—')+'</b> · '+esc(who)+'</span><span class="card-n">'+esc(x.type||'')+'</span></div>'}).join('');
   return h+'</div>'}
 var reconAssets=null;ui.recon=[];
+/* fotos do reconhecimento: ficam 4 dias e depois saem do banco e do armazenamento */
+var RECON_DAYS=4,reconGone={};
+function reconOld(x){var t=Date.parse(x.at||'');return !isNaN(t)&&Date.now()-t>RECON_DAYS*864e5}
+function reconSweep(){if(!liveDb)return;ui.recon.forEach(function(x){if(!reconOld(x)||reconGone[x.id]||(x.asset&&!reconAssets))return;reconGone[x.id]=1;
+  var rmAsset=function(){if(x.asset&&reconAssets)return reconAssets.delete(x.asset).catch(function(){})};
+  Promise.resolve(rmAsset()).then(function(){return liveDb.collection('recon').doc(x.id).delete()}).catch(function(){delete reconGone[x.id]})})}
 function canRecon(){var p=person(ui.realMe||ui.me);return !!p&&!ui.realMe&&(p.team==='seg'||p.admin)}
 function reconSrc(x){return x.url&&/^(https:\/\/|\/_blob\/)/.test(x.url)?x.url:(x.asset?'/_blob/'+x.asset:'')}
-function reconAlbum(d){var ph=ui.recon.filter(function(x){return x.day===d.id&&reconSrc(x)}),up=canRecon()&&liveDb&&reconAssets;
+function reconAlbum(d){var ph=ui.recon.filter(function(x){return x.day===d.id&&reconSrc(x)&&!reconOld(x)}),up=canRecon()&&liveDb&&reconAssets;
   if(!ph.length&&!up&&!liveDb)return '';
   var h='<div class="vt"><div class="lb">'+icon('palco')+'Reconhecimento em fotos'+(ph.length?' · '+ph.length:'')+'</div>';
   if(ph.length)h+='<div class="album">'+ph.map(function(x){return '<figure><a href="'+esc(reconSrc(x))+'" target="_blank" rel="noopener"><img src="'+esc(reconSrc(x))+'" alt="'+esc(x.cap||'Foto do reconhecimento')+'" loading="lazy"></a>'+(x.cap?'<figcaption>'+esc(x.cap)+'</figcaption>':'')+(up&&x.by===(ui.me)?'<button type="button" class="rdel" data-recondel="'+esc(x.id)+'" aria-label="Apagar foto">×</button>':'')+'</figure>'}).join('')+'</div>';
   else h+='<div class="card-n">'+(up?'Nenhuma foto ainda. Adicione as fotos do reconhecimento do local.':'A segurança ainda não enviou as fotos do reconhecimento.')+'</div>';
-  if(up)h+='<div class="fld" style="margin-top:8px"><label for="recon-cap">Legenda (opcional)</label><input id="recon-cap" placeholder="Ex.: entrada do camarim"></div><label class="btn primary" style="display:inline-flex;margin-top:6px">Adicionar fotos<input type="file" accept="image/*" multiple data-reconup="'+d.id+'" style="display:none"></label><div class="card-n" id="recon-st"></div>';
+  if(up)h+='<div class="fld" style="margin-top:8px"><label for="recon-cap">Legenda (opcional)</label><input id="recon-cap" placeholder="Ex.: entrada do camarim"></div><div class="btnrow" style="margin-top:6px"><label class="btn primary" style="display:inline-flex">Abrir a câmera<input type="file" accept="image/*" capture="environment" data-reconup="'+d.id+'" style="display:none"></label><label class="btn" style="display:inline-flex">Escolher da galeria<input type="file" accept="image/*" multiple data-reconup="'+d.id+'" style="display:none"></label></div><div class="card-n">As fotos ficam no app por '+RECON_DAYS+' dias e depois são apagadas sozinhas.</div><div class="card-n" id="recon-st"></div>';
   else if(canRecon()&&liveDb&&!reconAssets)h+='<div class="card-n">Envio de fotos indisponível neste acesso. Peça acesso de edição ao app.</div>';
   return h+'</div>'}
 function reconShrink(file){return new Promise(function(res){var u=URL.createObjectURL(file),im=new Image();im.onload=function(){var k=Math.min(1,1600/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(function(b){res(b||file)},'image/jpeg',0.82)};im.onerror=function(){URL.revokeObjectURL(u);res(file)};im.src=u})}
@@ -1327,8 +1365,9 @@ app.addEventListener('change',function(e){var t=e.target;if(!t.dataset||!t.datas
 app.addEventListener('click',function(e){var t=e.target.closest('[data-recondel]');if(!t||!liveDb)return;var id=t.dataset.recondel,x=ui.recon.filter(function(y){return y.id===id})[0];if(!x||x.by!==ui.me)return;
   liveDb.collection('recon').doc(id).delete().then(function(){if(x.asset&&reconAssets)return reconAssets.delete(x.asset).catch(function(){})}).catch(function(){flash('Não foi possível apagar.')})});
 function reconInit(db){db.collection('recon').orderBy('at','asc').limit(500).onSnapshot(function(snap){ui.recon=snap.docs.map(function(d){var x=d.data()||{};return {id:d.id,day:String(x.day||''),asset:String(x.asset||''),url:String(x.url||''),cap:String(x.cap||''),by:String(x.by||''),at:String(x.at||'')}});
+  try{reconSweep()}catch(e){}
   var ae=document.activeElement;if(ui.me&&!ui.sheet&&!ui.chatOpen&&document.querySelector('[data-artv]')&&!(ae&&ae.id==='recon-cap'))render()},function(){})}
-if(window.claude&&window.claude.use){window.claude.use('assets').then(function(a){reconAssets=a||null;if(ui.me)render()}).catch(function(){})}
+if(window.claude&&window.claude.use){window.claude.use('assets').then(function(a){reconAssets=a||null;try{reconSweep()}catch(e){}if(ui.me)render()}).catch(function(){})}
 function artContactRow(){var p=person(ui.me);var t=dmTargets(p).filter(function(id){var o=person(id);return id==='dandan'||(o&&o.team==='seg')});if(!t.length||chatState!=='on')return '';
   return '<div class="navbtns">'+t.map(function(id){var o=person(id);return '<a href="#" data-chat="dmopen" data-to="'+esc(id)+'">'+IC_CHAT+'Falar com '+esc(o.name.split(' (')[0])+(o.team==='seg'?' (seg.)':'')+'</a>'}).join('')+'</div>'}
 
@@ -1558,4 +1597,3 @@ app.addEventListener('submit',function(e){if(e.target.id==='sheetform'){e.preven
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&ui.sheet){ui.sheet=null;render()}});
 render();
 })();
-
